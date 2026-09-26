@@ -123,6 +123,48 @@ public class ExecutionTaskManagerTest {
         taskManager.getExecutionConcurrencyManager().getExecutionClusterLeadershipConcurrency());
   }
 
+  @Test
+  public void testStaticReplicasRespectInterBrokerConcurrency() {
+    Properties properties = KafkaCruiseControlUnitTestUtils.getKafkaCruiseControlProperties();
+    properties.put(ExecutorConfig.NUM_CONCURRENT_PARTITION_MOVEMENTS_PER_BROKER_CONFIG, "1");
+    properties.put(ExecutorConfig.EXECUTION_STATIC_REPLICA_CONCURRENCY_AWARE_CONFIG, "true");
+    ExecutionTaskManager staticReplicaAwareTaskManager = new ExecutionTaskManager(null, new MetricRegistry(), Time.SYSTEM,
+        new KafkaCruiseControlConfig(properties));
+
+    ReplicaPlacementInfo b0 = new ReplicaPlacementInfo(0);
+    ReplicaPlacementInfo b1 = new ReplicaPlacementInfo(1);
+    ReplicaPlacementInfo b2 = new ReplicaPlacementInfo(2);
+    ReplicaPlacementInfo b3 = new ReplicaPlacementInfo(3);
+    ReplicaPlacementInfo b4 = new ReplicaPlacementInfo(4);
+    ReplicaPlacementInfo b5 = new ReplicaPlacementInfo(5);
+    ExecutionProposal firstProposal = new ExecutionProposal(new TopicPartition("topic", 0), 10, b0,
+        Arrays.asList(b0, b1, b2), Arrays.asList(b0, b3, b2));
+    ExecutionProposal secondProposal = new ExecutionProposal(new TopicPartition("topic", 1), 10, b4,
+        Arrays.asList(b4, b1, b3), Arrays.asList(b4, b1, b5));
+    Node n0 = new Node(0, "null", -1);
+    Node n1 = new Node(1, "null", -1);
+    Node n2 = new Node(2, "null", -1);
+    Node n3 = new Node(3, "null", -1);
+    Node n4 = new Node(4, "null", -1);
+    Node n5 = new Node(5, "null", -1);
+    Node[] firstReplicas = {n0, n1, n2};
+    Node[] secondReplicas = {n4, n1, n3};
+    Cluster cluster = new Cluster(null, Arrays.asList(n0, n1, n2, n3, n4, n5),
+        new java.util.HashSet<>(Arrays.asList(
+            new PartitionInfo("topic", 0, n0, firstReplicas, firstReplicas),
+            new PartitionInfo("topic", 1, n4, secondReplicas, secondReplicas))),
+        Collections.emptySet(), Collections.emptySet());
+    staticReplicaAwareTaskManager.addExecutionProposals(Arrays.asList(firstProposal, secondProposal), Collections.emptySet(),
+        new StrategyOptions.Builder(cluster).build(), null);
+
+    List<ExecutionTask> firstBatch = staticReplicaAwareTaskManager.getInterBrokerReplicaMovementTasks();
+    assertEquals(1, firstBatch.size());
+    staticReplicaAwareTaskManager.markTasksInProgress(firstBatch);
+    assertEquals(0, staticReplicaAwareTaskManager.getInterBrokerReplicaMovementTasks().size());
+    staticReplicaAwareTaskManager.markTaskDone(firstBatch.get(0));
+    assertEquals(1, staticReplicaAwareTaskManager.getInterBrokerReplicaMovementTasks().size());
+  }
+
   private void verifyStateChangeSequence(List<ExecutionTaskState> stateSequence,
                                          ExecutionTask task,
                                          ExecutionTaskManager taskManager) {

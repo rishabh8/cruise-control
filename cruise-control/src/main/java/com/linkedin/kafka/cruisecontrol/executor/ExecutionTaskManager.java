@@ -17,6 +17,7 @@ import java.util.*;
 
 import static com.linkedin.kafka.cruisecontrol.executor.ExecutionTask.TaskType;
 import static com.linkedin.kafka.cruisecontrol.executor.ExecutionTaskTracker.ExecutionTasksSummary;
+import static com.linkedin.kafka.cruisecontrol.config.constants.ExecutorConfig.EXECUTION_STATIC_REPLICA_CONCURRENCY_AWARE_CONFIG;
 
 /**
  * The class that helps track the execution status for the balancing.
@@ -37,6 +38,7 @@ public class ExecutionTaskManager {
     private final ExecutionTaskPlanner _executionTaskPlanner;
     private final ExecutionConcurrencyManager _executionConcurrencyManager;
     private final Set<Integer> _brokersToSkipConcurrencyCheck;
+    private final boolean _staticReplicaConcurrencyAware;
     private boolean _isKafkaAssignerMode;
 
     /**
@@ -55,6 +57,7 @@ public class ExecutionTaskManager {
         _executionTaskPlanner = new ExecutionTaskPlanner(adminClient, config);
         _executionConcurrencyManager = new ExecutionConcurrencyManager(config);
         _brokersToSkipConcurrencyCheck = new HashSet<>();
+        _staticReplicaConcurrencyAware = config.getBoolean(EXECUTION_STATIC_REPLICA_CONCURRENCY_AWARE_CONFIG);
         _isKafkaAssignerMode = false;
     }
 
@@ -118,8 +121,7 @@ public class ExecutionTaskManager {
         _executionTaskPlanner.addExecutionProposals(proposals, strategyOptions, replicaMovementStrategy);
         for (ExecutionProposal p : proposals) {
             p.replicasToMoveBetweenDisksByBroker().keySet().forEach(broker -> _inProgressIntraBrokerReplicaMovementsByBrokerId.putIfAbsent(broker, 0));
-            _inProgressInterBrokerReplicaMovementsByBrokerId.putIfAbsent(p.oldLeader().brokerId(), 0);
-            p.replicasToAdd().forEach(r -> _inProgressInterBrokerReplicaMovementsByBrokerId.putIfAbsent(r.brokerId(), 0));
+            interBrokerMovementBrokers(p).forEach(broker -> _inProgressInterBrokerReplicaMovementsByBrokerId.putIfAbsent(broker, 0));
         }
         // Set the execution mode for tasks.
         _executionTaskTracker.setExecutionMode(_isKafkaAssignerMode);
@@ -154,9 +156,8 @@ public class ExecutionTaskManager {
             switch (task.type()) {
                 case INTER_BROKER_REPLICA_ACTION:
                     _inProgressPartitionsForInterBrokerMovement.add(task.proposal().topicPartition());
-                    int oldLeader = task.proposal().oldLeader().brokerId();
-                    _inProgressInterBrokerReplicaMovementsByBrokerId.put(oldLeader, _inProgressInterBrokerReplicaMovementsByBrokerId.get(oldLeader) + 1);
-                    task.proposal().replicasToAdd().forEach(r -> _inProgressInterBrokerReplicaMovementsByBrokerId.put(r.brokerId(), _inProgressInterBrokerReplicaMovementsByBrokerId.get(r.brokerId()) + 1));
+                    interBrokerMovementBrokers(task.proposal()).forEach(broker -> _inProgressInterBrokerReplicaMovementsByBrokerId.put(
+                            broker, _inProgressInterBrokerReplicaMovementsByBrokerId.get(broker) + 1));
                     break;
                 case INTRA_BROKER_REPLICA_ACTION:
                     _inProgressIntraBrokerReplicaMovementsByBrokerId.put(task.brokerId(), _inProgressIntraBrokerReplicaMovementsByBrokerId.get(task.brokerId()) + 1);
@@ -215,9 +216,8 @@ public class ExecutionTaskManager {
         switch (task.type()) {
             case INTER_BROKER_REPLICA_ACTION:
                 _inProgressPartitionsForInterBrokerMovement.remove(task.proposal().topicPartition());
-                int oldLeader = task.proposal().oldLeader().brokerId();
-                _inProgressInterBrokerReplicaMovementsByBrokerId.put(oldLeader, _inProgressInterBrokerReplicaMovementsByBrokerId.get(oldLeader) - 1);
-                task.proposal().replicasToAdd().forEach(r -> _inProgressInterBrokerReplicaMovementsByBrokerId.put(r.brokerId(), _inProgressInterBrokerReplicaMovementsByBrokerId.get(r.brokerId()) - 1));
+                interBrokerMovementBrokers(task.proposal()).forEach(broker -> _inProgressInterBrokerReplicaMovementsByBrokerId.put(
+                        broker, _inProgressInterBrokerReplicaMovementsByBrokerId.get(broker) - 1));
                 break;
             case INTRA_BROKER_REPLICA_ACTION:
                 _inProgressIntraBrokerReplicaMovementsByBrokerId.put(task.brokerId(), _inProgressIntraBrokerReplicaMovementsByBrokerId.get(task.brokerId()) - 1);
@@ -226,6 +226,18 @@ public class ExecutionTaskManager {
                 // No-op for other type of task, i.e LEADER_ACTION.
                 break;
         }
+    }
+
+    private Set<Integer> interBrokerMovementBrokers(ExecutionProposal proposal) {
+        Set<Integer> brokers = new HashSet<>();
+        if (_staticReplicaConcurrencyAware) {
+            proposal.oldReplicas().forEach(replica -> brokers.add(replica.brokerId()));
+            proposal.newReplicas().forEach(replica -> brokers.add(replica.brokerId()));
+        } else {
+            brokers.add(proposal.oldLeader().brokerId());
+            proposal.replicasToAdd().forEach(replica -> brokers.add(replica.brokerId()));
+        }
+        return brokers;
     }
 
     /**

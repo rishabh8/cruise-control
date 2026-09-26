@@ -38,6 +38,16 @@ public final class ExecutorConfig {
             + "given point. This is to avoid overwhelming the cluster by inter-broker partition movements.";
 
     /**
+     * <code>execution.static.replica.concurrency.aware</code>
+     */
+    public static final String EXECUTION_STATIC_REPLICA_CONCURRENCY_AWARE_CONFIG = "execution.static.replica.concurrency.aware";
+    public static final boolean DEFAULT_EXECUTION_STATIC_REPLICA_CONCURRENCY_AWARE = false;
+    public static final String EXECUTION_STATIC_REPLICA_CONCURRENCY_AWARE_DOC = "Whether inter-broker partition movement concurrency "
+            + "accounts for every broker in the old or new replica assignment. When enabled, a stationary replica "
+            + "also consumes one slot for the duration of a reassignment. This more conservative behavior helps prevent "
+            + "multiple reassignments from overloading a broker that remains in their replica sets.";
+
+    /**
      * <code>num.concurrent.intra.broker.partition.movements</code>
      */
     public static final String NUM_CONCURRENT_INTRA_BROKER_PARTITION_MOVEMENTS_CONFIG = "num.concurrent.intra.broker.partition.movements";
@@ -516,6 +526,11 @@ public final class ExecutorConfig {
                         atLeast(1),
                         ConfigDef.Importance.MEDIUM,
                         NUM_CONCURRENT_PARTITION_MOVEMENTS_PER_BROKER_DOC)
+                .define(EXECUTION_STATIC_REPLICA_CONCURRENCY_AWARE_CONFIG,
+                        ConfigDef.Type.BOOLEAN,
+                        DEFAULT_EXECUTION_STATIC_REPLICA_CONCURRENCY_AWARE,
+                        ConfigDef.Importance.MEDIUM,
+                        EXECUTION_STATIC_REPLICA_CONCURRENCY_AWARE_DOC)
                 .define(NUM_CONCURRENT_INTRA_BROKER_PARTITION_MOVEMENTS_CONFIG,
                         ConfigDef.Type.INT,
                         DEFAULT_NUM_CONCURRENT_INTRA_BROKER_PARTITION_MOVEMENTS,
